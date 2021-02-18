@@ -80,25 +80,23 @@ def run_validation(x,y,taus,val_frac):
     losses_train = []
     losses_val = []
 
-    with tqdm(total=len(taus)) as pbar:
-        for tau in taus:
-            loss_val = 0.
-            for test_datum, t in zip(x_val, y_val):
-                y_hat = LRLS(test_datum, x_train, y_train, tau)
-                loss_val += (y_hat - t) ** 2
-            losses_val.append(loss_val/len(x_val))
+    for tau in taus:
+        loss_val = 0.
+        for test_datum, t in zip(x_val, y_val):
+            y_hat = LRLS(test_datum, x_train, y_train, tau)
+            loss_val += (y_hat - t) ** 2
+        losses_val.append(loss_val/len(x_val))
 
-            loss_train = 0.
-            for test_datum, t in zip(x_train, y_train):
-                y_hat = LRLS(test_datum, x_train, y_train, tau)
-                loss_train += (y_hat - t) ** 2
-            losses_train.append(loss_train/len(x_train))
-            
-            if tau == 10.:
-                print('Validation loss:', loss_val)
-                print('Train loss:', loss_train)
-            
-            pbar.update(1)
+        loss_train = 0.
+        for test_datum, t in zip(x_train, y_train):
+            y_hat = LRLS(test_datum, x_train, y_train, tau)
+            loss_train += (y_hat - t) ** 2
+        losses_train.append(loss_train/len(x_train))
+        
+        if tau == 10.:
+            print('Validation loss (tau = 10):', loss_val)
+            print('Train loss (tau = 10):', loss_train)
+        
 
     return losses_train, losses_val
     ## TODO
