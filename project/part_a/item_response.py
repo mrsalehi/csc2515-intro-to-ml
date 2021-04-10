@@ -1,9 +1,10 @@
 import sys
 sys.path.append("..")
 
-from ..utils import *
+from utils import *
 
 from scipy.special import logsumexp
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -30,10 +31,9 @@ def neg_log_likelihood(data, theta, beta):
     #####################################################################
     log_lklihood = 0.
     
-    for qid, uid, is_cor in zip(data['user_id'], data['question_id'], data['is_correct']):
-        if is_cor:
-            # more stable implementation of sigmoid using logsumexp
-            log_lklihood += -logsumexp([0, beta[qid]-theta[uid]])
+    for uid, qid, is_cor in zip(data['user_id'], data['question_id'], data['is_correct']):
+        x = theta[uid] - beta[qid]
+        log_lklihood += -logsumexp([0, -x]) if is_cor else -logsumexp([0, x])
         
     #####################################################################
     #                       END OF YOUR CODE                            #
@@ -65,11 +65,13 @@ def update_theta_beta(data, lr, theta, beta):
     grad_theta = np.zeros_like(theta)
     grad_beta = np.zeros_like(beta)
 
-    for qid, uid, is_cor in zip(data['user_id'], data['question_id'], data['is_correct']):
-        sigmoid = -logsumexp([0, beta[qid]-theta[uid]])
-        if is_cor:
-            grad_theta[uid] -= sigmoid * (1 - sigmoid) 
-            grad_beta[qid] += sigmoid * (1 - sigmoid) 
+    for uid, qid, is_cor in zip(data['user_id'], data['question_id'], data['is_correct']):
+        x = theta[uid] - beta[qid]
+        #log_sig = -logsumexp([0, -x])
+        sig = sigmoid(x)
+
+        grad_theta[uid] += -(1 - sig) if is_cor else sig
+        grad_beta[qid] += (1 - sig) if is_cor else -sig
 
     theta -= lr * grad_theta
     beta -= lr * grad_beta
@@ -93,20 +95,34 @@ def irt(data, val_data, lr, iterations):
     :return: (theta, beta, val_acc_lst)
     """
     # TODO: Initialize theta and beta.
-    theta = None
-    beta = None
+    theta = np.zeros((542,))
+    beta = np.zeros((1774,))
 
     val_acc_lst = []
+    train_lls = []
+    val_lls = []
 
     for i in range(iterations):
         neg_lld = neg_log_likelihood(data, theta=theta, beta=beta)
+        train_lls.append(neg_lld)
+        neg_lld_val = neg_log_likelihood(val_data, theta=theta, beta=beta)
+        val_lls.append(neg_lld_val)
+
         score = evaluate(data=val_data, theta=theta, beta=beta)
+        
+        if not val_acc_lst:
+            val_acc_lst = [score]
+        elif score > max(val_acc_lst):
+            best_theta = theta.copy()
+            best_beta = beta.copy()
+        
         val_acc_lst.append(score)
-        print("NLLK: {} \t Score: {}".format(neg_lld, score))
-        theta, beta = update_theta_beta(data, lr, theta, beta)
+        
+        print("Iteration {}, NLLK: {} \t Score: {}".format(i, neg_lld, score))
+        update_theta_beta(data, lr, theta, beta)
 
     # TODO: You may change the return values to achieve what you want.
-    return theta, beta, val_acc_lst
+    return best_theta, best_beta, train_lls, val_lls, val_acc_lst
 
 
 def evaluate(data, theta, beta):
@@ -124,6 +140,7 @@ def evaluate(data, theta, beta):
         x = (theta[u] - beta[q]).sum()
         p_a = sigmoid(x)
         pred.append(p_a >= 0.5)
+    
     return np.sum((data["is_correct"] == np.array(pred))) \
            / len(data["is_correct"])
 
@@ -140,8 +157,13 @@ def main():
     # Tune learning rate and number of iterations. With the implemented #
     # code, report the validation and test accuracy.                    #
     #####################################################################
-    theta, beta, val_acc_lst = irt(train_data, val_data, lr=1e-4, iterations=100)
-    print(max(val_acc_lst))
+    best_theta, best_beta, train_lls, val_lls, val_acc_lst = irt(train_data, val_data, lr=1e-2, iterations=3)
+    print('Val Acc:', max(val_acc_lst))
+
+    plt.plot(train_lls, label="Train log-likelihood")
+    plt.plot(val_lls, label='Val log-likelihood')
+    plt.legend()
+    plt.savefig('curve-itr.png')
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
@@ -150,7 +172,26 @@ def main():
     # TODO:                                                             #
     # Implement part (c)                                                #
     #####################################################################
-    print(evaluate(data=test_data, theta=theta, beta=beta))
+    print('Test Acc:', evaluate(data=test_data, theta=best_theta, beta=best_beta))
+
+
+    # part d
+    plt.clf()
+    sample_betas = np.random.choice(best_beta, size=5, replace=False)
+    
+    for beta in sample_betas:
+        probs = []
+        for theta in sorted(best_theta):
+            probs.append(sigmoid(theta - beta))
+        
+        plt.plot(list(sorted(best_theta)), probs, label=f'beta={beta}')
+    
+    plt.xlabel('theta')
+    plt.ylabel('Probability')
+    plt.title('Probability of correct answer given thetas and 5 sample betas')
+    plt.legend()
+    plt.savefig('partd.png')
+
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
