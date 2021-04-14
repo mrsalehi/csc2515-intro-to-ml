@@ -17,6 +17,8 @@ from time import time
 import random
 import csv
 
+import wandb
+
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -25,6 +27,8 @@ random.seed(0)
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('Runnnig on', DEVICE)
+
+wandb.init(project='csc2515-proj', name=f'sgd (lr=1e-2)')
 
 
 def load_data(base_path="../data"):
@@ -99,10 +103,13 @@ class AutoEncoder(nn.Module):
         # option 1:
         out = torch.sigmoid(self.h(torch.sigmoid(self.g(inputs))))
 
-        # option2:
-        # out = torch.sigmoid(self.h(F.relu(self.g(inputs))))
+        # option 2:
+        #out = torch.sigmoid(self.h(F.relu(self.g(inputs))))
 
-        # option3
+        # option 3:
+        #out = torch.sigmoid(self.h(torch.tanh(self.g(inputs))))
+
+        # option 4:
         # out = F.relu(self.g(inputs))
         # out = F.relu(self.)
         #####################################################################
@@ -111,8 +118,8 @@ class AutoEncoder(nn.Module):
         return out
 
 
-def train(model, lr, lamb, train_data, zero_train_data, valid_data, 
-num_epoch, k, eval_input_matrix, chkpt_name):
+def train(model, train_data, zero_train_data, valid_data, 
+eval_input_matrix, cfg):
     """ Train the neural network, where the objective also includes
     a regularizer.
 
@@ -131,7 +138,7 @@ num_epoch, k, eval_input_matrix, chkpt_name):
     model.train()
 
     # Define optimizers and loss function.
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.SGD(model.parameters(), lr=cfg.lr)
 
     num_student = train_data.shape[0]
 
@@ -140,11 +147,11 @@ num_epoch, k, eval_input_matrix, chkpt_name):
 
     best_val_acc = 0.
 
-    for epoch in range(0, num_epoch):
+    for epoch in range(0, cfg.num_epoch):
         train_loss = 0.
 
         for X_zero, X in data_loader(
-            zero_train_data, train_data, batch_size=128, shuffle=False):
+            zero_train_data, train_data, batch_size=cfg.batch_size, shuffle=False):
             
             X_zero = X_zero.to(DEVICE)
             target = X_zero.clone()
@@ -157,20 +164,20 @@ num_epoch, k, eval_input_matrix, chkpt_name):
             target[nan_mask] = output[nan_mask]
 
             loss = torch.mean(torch.sum((output - target) ** 2., dim=-1))
-            loss += 0.5 * lamb * model.get_weight_norm()
+            loss += 0.5 * cfg.lamb * model.get_weight_norm()
+
             loss.backward()
 
             train_loss += loss.item()
             optimizer.step()
 
         valid_acc = evaluate(model, eval_input_matrix, valid_data)
+        wandb.log({'Epoch': epoch, 'Val Acc': valid_acc, 'Train Loss': train_loss})
         
         if valid_acc > best_val_acc:
             model.cpu()
             best_val_acc = valid_acc
-            torch.save({
-            'model_state_dict': model.state_dict(),
-            }, f'best_net_{chkpt_name}.pt')
+            torch.save({'model_state_dict': model.state_dict()}, cfg.chkpt_name)
             model.to(DEVICE)
         
         
@@ -233,28 +240,37 @@ def evaluate(model, val_input_matrix, valid_data):
 
 
 def main():
+    # is_nan = torch.isnan(train_matrix)
+    # print(torch.mean(torch.sum(is_nan, dim=-1).float()))  # out: 1669.4
+
+    k = 50
+    lamb = 0.
+    num_epoch = 1000
+    lr = 1e-3
+    batch_size = 128
+    chkpt_name = "k-50"
+
+    wandb.config.num_epoch = num_epoch
+    wandb.config.lr = lr
+    wandb.config.lamb = lamb
+    wandb.config.k = k
+    wandb.config.chkpt_name = chkpt_name
+    wandb.config.batch_size = batch_size
+
+    cfg = wandb.config
+
     zero_train_matrix, train_matrix, valid_data, test_data = load_data()
 
     eval_input_matrix = build_evaluation_input_matrix(valid_data, zero_train_matrix)
     train_data = build_train_data_dict(train_matrix)
 
-    # is_nan = torch.isnan(train_matrix)
-    # print(torch.mean(torch.sum(is_nan, dim=-1).float()))  # out: 1669.4
-
-
-    k = 5
-    lamb = 0.
-    num_epoch = 1000
-    lr = 1e-3
-
     model = AutoEncoder(num_question=1774, k=k)
+
     model.to(DEVICE)
-    chkpt_name='k-100'
     
     train_losses, val_accs, best_val_acc = train(
         model=model, train_data=train_matrix, zero_train_data=zero_train_matrix, 
-        valid_data=valid_data, k=k, num_epoch=num_epoch, lr=lr, lamb=lamb,
-        eval_input_matrix=eval_input_matrix, chkpt_name=chkpt_name)
+        valid_data=valid_data, eval_input_matrix=eval_input_matrix, cfg=cfg)
 
 
     print('Train acc:', evaluate(
