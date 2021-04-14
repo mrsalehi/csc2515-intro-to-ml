@@ -70,8 +70,8 @@ def main():
     # fig, axes = plt.subplots(1)
     # fig.tight_layout()
 
-    ks = [1, 6, 11, 16, 21, 26]
-    accs = []
+    # ks = [1, 6, 11, 16, 21, 26]
+    # accs = []
 
     # for i, k in enumerate([1, 6, 11, 16, 21, 26]):
     #     print(f'K={k},', end=' ')
@@ -84,24 +84,27 @@ def main():
 
     # plt.savefig('fig-user.png')
 
-    # test accuracy 
+    # # test accuracy 
     # knn_impute_by_user(sparse_matrix, test_data, 11)
 
     plt.clf()
 
-    # for i, k in enumerate([1, 6, 11, 16, 21, 26]):
-    #     print(f'K={k},', end=' ')
-    #     accs.append(knn_impute_by_item(sparse_matrix, val_data, k))
+    accs = []
+    ks = [1, 6, 11, 16, 21, 26]
 
-    # plt.plot(ks, accs)
-    # plt.xlabel('k')
-    # plt.ylabel('Acc')
-    # plt.title('Validation Accuracy')
+    for i, k in enumerate(ks):
+        print(f'K={k},', end=' ')
+        accs.append(knn_impute_by_item(sparse_matrix, val_data, k))
 
-    # plt.savefig('fig-item.png')
+    plt.plot(ks, accs)
+    plt.xlabel('k')
+    plt.ylabel('Acc')
+    plt.title('Validation Accuracy')
+
+    plt.savefig('fig-item.png')
 
     # test accuracy 
-    # knn_impute_by_user(sparse_matrix, test_data, 21)
+    knn_impute_by_user(sparse_matrix, test_data, 21)
 
     #####################################################################
     #                       END OF YOUR CODE                            #

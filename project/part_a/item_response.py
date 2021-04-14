@@ -104,9 +104,9 @@ def irt(data, val_data, lr, iterations):
 
     for i in range(iterations):
         neg_lld = neg_log_likelihood(data, theta=theta, beta=beta)
-        train_lls.append(neg_lld)
+        train_lls.append(-neg_lld)
         neg_lld_val = neg_log_likelihood(val_data, theta=theta, beta=beta)
-        val_lls.append(neg_lld_val)
+        val_lls.append(-neg_lld_val)
 
         score = evaluate(data=val_data, theta=theta, beta=beta)
         
@@ -157,11 +157,13 @@ def main():
     # Tune learning rate and number of iterations. With the implemented #
     # code, report the validation and test accuracy.                    #
     #####################################################################
-    best_theta, best_beta, train_lls, val_lls, val_acc_lst = irt(train_data, val_data, lr=1e-2, iterations=3)
+    best_theta, best_beta, train_lls, val_lls, val_acc_lst = irt(train_data, val_data, lr=1e-2, iterations=20)
     print('Val Acc:', max(val_acc_lst))
 
-    plt.plot(train_lls, label="Train log-likelihood")
-    plt.plot(val_lls, label='Val log-likelihood')
+    plt.plot(list(range(20)), train_lls, label="Train")
+    plt.plot(list(range(20)), val_lls, label='Val')
+    plt.xlabel('Itarations')
+    plt.ylabel('Log-likelihood')
     plt.legend()
     plt.savefig('curve-itr.png')
     #####################################################################

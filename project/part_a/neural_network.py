@@ -12,9 +12,15 @@ from matplotlib import pyplot as plt
 
 import numpy as np
 import torch
+import random
 
 
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+torch.manual_seed(0)
+np.random.seed(0)
+random.seed(0)
+
+
+DEVICE = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 print('Runnnig on', DEVICE)
 
 def load_data(base_path="../data"):
@@ -84,7 +90,7 @@ class AutoEncoder(nn.Module):
         return out
 
 
-def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
+def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch, chkpt_name):
     """ Train the neural network, where the objective also includes
     a regularizer.
 
@@ -95,6 +101,8 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
     :param zero_train_data: 2D FloatTensor
     :param valid_data: Dict
     :param num_epoch: int
+    :param k: int  (just to be used in the checkpoint file name)
+
     :return: None
     """
     # TODO: Add a regularizer to the cost function. 
@@ -109,6 +117,8 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
     val_accs = []
     train_losses = []
 
+    best_val_acc = 0.
+
     for epoch in range(0, num_epoch):
         train_loss = 0.
 
@@ -118,12 +128,9 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
 
             optimizer.zero_grad()
             output = model(inputs)
-            output = output
 
             # Mask the target to only compute the gradient of valid entries.
             nan_mask = np.isnan(train_data[user_id].unsqueeze(0).numpy())
-            #nan_mask = torch.isnan(train_data[user_id]).to(DEVICE)
-            #nan_mask = torch.tensor(nan_mask).to(DEVICE)
             target[0][nan_mask] = output[0][nan_mask]
 
             loss = torch.sum((output - target) ** 2.)
@@ -134,13 +141,23 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
             optimizer.step()
 
         valid_acc = evaluate(model, zero_train_data, valid_data)
+        
+        if valid_acc > best_val_acc:
+            model.cpu()
+            best_val_acc = valid_acc
+            torch.save({
+            'model_state_dict': model.state_dict(),
+            }, f'best_net_{chkpt_name}.pt')
+            model.to(DEVICE)
+
+        
         val_accs.append(valid_acc)
         train_losses.append(train_loss)
 
         print("Epoch: {} \tTraining Cost: {:.6f}\t "
               "Valid Acc: {}".format(epoch, train_loss, valid_acc))
     
-    return train_losses, val_accs
+    return train_losses, val_accs, best_val_acc
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
@@ -180,99 +197,90 @@ def main():
     # validation set.                                                   #
     #####################################################################
     # Set model hyperparameters.
-    # ks = [10, 50, 100, 200, 500]
+    part = 'e'
+
+    model = AutoEncoder(num_question=1774, k=10)
+
     
-    # I got the best result with k=100
-    # k = 100
-    
-    # Set optimization hyperparameters.
-    # lr = 1e-2
-    # num_epoch = 40
-    # lamb = 0.01
-    
-    # best_model = None
-    # best_k = None
-    # best_val_acc = 0.
-
-    # val_accs = []
-    # train_losses = []
-
-    # for k in ks:
-    # print(k)
-    # model = AutoEncoder(num_question=1774, k=k)
-    # model.to(DEVICE)
-    # train_losses, val_accs = train(
-    #     model, lr, lamb, train_matrix, zero_train_matrix,
-    #     valid_data, num_epoch)
-
-    # fig, axes = plt.subplots(2, figsize=(20, 20))
-    
-    # axes[0].plot(train_losses)
-    # axes[0].set_xlabel('Epoch')
-    # axes[0].set_ylabel('Train loss')
-
-    # axes[1].plot(val_accs)
-    # axes[1].set_xlabel('Epoch')
-    # axes[1].set_ylabel('Val Acc')
-
-    # plt.savefig('nn.png')
-
-    # test_acc = evaluate(model, zero_train_matrix, test_data)
-    # print('Test acc', test_acc)
-    
-    # acc = evaluate(model, zero_train_matrix, valid_data)
-    # if acc > best_val_acc:
-    #     best_k = k
-    #     best_val_acc = acc
-    #     best_model = model
-
-    # lr = 1e-3
-    # num_epoch = 40
-
-    # lambs = [1e-3, 1e-2, 1e-1, 1]
-    # best_model = None
-    # best_lamb = None
-    # best_val_acc = 0.
-    
-    # for lamb in lambs:
-    #     print(lamb)
-    #     model = AutoEncoder(num_question=1774, k=100)
-    #     model.to(DEVICE)
-    #     train_losses, val_accs = train(
-    #         model, lr, lamb, train_matrix, zero_train_matrix,
-    #         valid_data, num_epoch)
+    if part == 'c':
+        ks = [10, 50, 100, 200, 500]
+        lr = 1e-2
+        num_epoch = 100
+        lamb = 0.   
         
-    #     if val_accs[-1] > best_val_acc:
-    #         best_lamb = lamb
-    #         best_val_acc = val_accs[-1]
-    #         best_model = model
+        best_k = None
+        best_overal_val_acc = 0.
+
+        for k in ks:
+            print(k)
+            model = AutoEncoder(num_question=1774, k=k)
+            model.to(DEVICE)
+            train_losses, val_accs, best_val_acc = train(
+                model, lr, lamb, train_matrix, 
+                zero_train_matrix, valid_data, num_epoch, k)
+            
+            if best_val_acc > best_overal_val_acc:
+                best_k = k
+                best_overal_val_acc = best_val_acc
+
+            fig, axes = plt.subplots(2, figsize=(20, 20))
+        
+            axes[0].plot(train_losses)
+            axes[0].set_xlabel('Epoch')
+            axes[0].set_ylabel('Train loss')
+
+            axes[1].plot(val_accs)
+            axes[1].set_xlabel('Epoch')
+            axes[1].set_ylabel('Val Acc')
+
+            plt.savefig(f'nn-{k}.png')
+        
+        print(best_k, best_overal_val_acc)
     
-    # print(best_lamb)
+    elif part == 'd':
+        k = 50 
+        model = AutoEncoder(num_question=1774, k=k)
+        checkpoint = torch.load('best_net_50.pt')
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.to(DEVICE)
 
-    lamb = 1e-3
-    lr = 1e-2
-    num_epoch = 40
+        valid_acc = evaluate(model, zero_train_matrix, valid_data)
+        print('Val acc:', valid_acc)
+        test_acc = evaluate(model, zero_train_matrix, test_data)
+        print('Test acc:', test_acc)
 
-    model = AutoEncoder(num_question=1774, k=100)
-    model.to(DEVICE)
-    train_losses, val_accs = train(
-        model, lr, lamb, train_matrix, zero_train_matrix,
-        valid_data, num_epoch)
-    
-    fig, axes = plt.subplots(2, figsize=(20, 20))
-    
-    axes[0].plot(train_losses)
-    axes[0].set_xlabel('Epoch')
-    axes[0].set_ylabel('Train loss')
+    elif part == 'e':
+        # lr = 1e-2
+        # num_epoch = 100
 
-    axes[1].plot(val_accs)
-    axes[1].set_xlabel('Epoch')
-    axes[1].set_ylabel('Val Acc')
+        # lambs = [1e-3, 1e-2, 1e-1, 1]
+        # best_lamb = None
+        # best_overal_val_acc = 0.
+        
+        # for lamb in lambs:
+        #     print(lamb)
+        #     model = AutoEncoder(num_question=1774, k=50)
+        #     model.to(DEVICE)
+        #     train_losses, val_accs, best_val_acc = train(
+        #         model, lr, lamb, train_matrix, zero_train_matrix,
+        #         valid_data, num_epoch, chkpt_name=str(lamb)[2:])
+            
+            
+        #     if best_val_acc > best_overal_val_acc:
+        #         best_lamb = lamb
+        #         best_overal_val_acc = best_val_acc
+        
+        # print(best_lamb, best_overal_val_acc)
+        k = 50 
+        model = AutoEncoder(num_question=1774, k=k)
+        checkpoint = torch.load('best_net_001.pt')
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.to(DEVICE)
 
-    plt.savefig('nn-lamb.png')
-
-    test_acc = evaluate(model, zero_train_matrix, test_data)
-    print('Test acc', test_acc)
+        valid_acc = evaluate(model, zero_train_matrix, valid_data)
+        print('Val acc:', valid_acc)
+        test_acc = evaluate(model, zero_train_matrix, test_data)
+        print('Test acc:', test_acc)
 
     #####################################################################
     #                       END OF YOUR CODE                            #
