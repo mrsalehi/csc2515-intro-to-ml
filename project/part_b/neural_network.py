@@ -20,17 +20,6 @@ import csv
 import wandb
 
 
-torch.manual_seed(0)
-np.random.seed(0)
-random.seed(0)
-
-
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print('Runnnig on', DEVICE)
-
-wandb.init(project='csc2515-proj', name=f'sgd (lr=1e-2)')
-
-
 def load_data(base_path="../data"):
     """ Load the data in PyTorch Tensor.
 
@@ -68,7 +57,7 @@ def data_loader(zero_train_matrix, train_matrix, batch_size, shuffle=True):
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, num_question, k=100):
+    def __init__(self, num_question, n_hidden_units, activation='sigmoid'):
         """ Initialize a class AutoEncoder.
 
         :param num_question: int
@@ -77,8 +66,26 @@ class AutoEncoder(nn.Module):
         super(AutoEncoder, self).__init__()
 
         # Define linear functions.
-        self.g = nn.Linear(num_question, k)
-        self.h = nn.Linear(k, num_question)
+
+        n_units = [num_question] + n_hidden_units + [num_question]
+
+        if activation == 'relu':
+            self.activation = nn.ReLU()
+        elif activation == 'sigmoid':
+            self.activation = nn.Sigmoid()
+        
+        self.net = []
+
+        for i in range(len(n_units) - 1):
+            self.net.append(nn.Linear(n_units[i], n_units[i+1]))
+
+            if i < len(n_units) - 2:
+                self.net.append(self.activation)
+            else:
+                self.net.append(nn.Sigmoid())
+
+        self.net = nn.Sequential(*self.net)
+
 
     def get_weight_norm(self):
         """ Return ||W^1|| + ||W^2||.
@@ -100,18 +107,7 @@ class AutoEncoder(nn.Module):
         # Implement the function as described in the docstring.             #
         # Use sigmoid activations for f and g.                              #
         #####################################################################
-        # option 1:
-        out = torch.sigmoid(self.h(torch.sigmoid(self.g(inputs))))
-
-        # option 2:
-        #out = torch.sigmoid(self.h(F.relu(self.g(inputs))))
-
-        # option 3:
-        #out = torch.sigmoid(self.h(torch.tanh(self.g(inputs))))
-
-        # option 4:
-        # out = F.relu(self.g(inputs))
-        # out = F.relu(self.)
+        out = self.net(inputs)
         #####################################################################
         #                       END OF YOUR CODE                            #
         #####################################################################
@@ -138,7 +134,11 @@ eval_input_matrix, cfg):
     model.train()
 
     # Define optimizers and loss function.
-    optimizer = optim.SGD(model.parameters(), lr=cfg.lr)
+    if cfg.optim == 'adam':
+        optimizer = optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.lamb)
+    elif cfg.optim == 'sgd':
+        optimizer = optim.SGD(model.parameters(), lr=cfg.lr, weight_decay=cfg.lamb)
+    
 
     num_student = train_data.shape[0]
 
@@ -159,17 +159,22 @@ eval_input_matrix, cfg):
             optimizer.zero_grad()
             output = model(X_zero)
 
-    #         # Mask the target to only compute the gradient of valid entries.
+            # Mask the target to only compute the gradient of valid entries.
             nan_mask = torch.isnan(X)
             target[nan_mask] = output[nan_mask]
 
             loss = torch.mean(torch.sum((output - target) ** 2., dim=-1))
-            loss += 0.5 * cfg.lamb * model.get_weight_norm()
+            #loss += 0.5 * cfg.lamb * model.get_weight_norm()
 
             loss.backward()
 
             train_loss += loss.item()
             optimizer.step()
+
+        # if epoch == 300:
+        #     print('Reducing learning rate')
+        #     for g in optimizer.param_groups:
+        #         g['lr'] *= 0.1
 
         valid_acc = evaluate(model, eval_input_matrix, valid_data)
         wandb.log({'Epoch': epoch, 'Val Acc': valid_acc, 'Train Loss': train_loss})
@@ -243,50 +248,67 @@ def main():
     # is_nan = torch.isnan(train_matrix)
     # print(torch.mean(torch.sum(is_nan, dim=-1).float()))  # out: 1669.4
 
-    k = 50
+    TRAIN = True
+
+    n_hidden_units = [50]
     lamb = 0.
     num_epoch = 1000
     lr = 1e-3
     batch_size = 128
-    chkpt_name = "k-50"
+    chkpt_name = "50"
+    activation = "sigmoid"
+    optim = "adam"
 
-    wandb.config.num_epoch = num_epoch
-    wandb.config.lr = lr
-    wandb.config.lamb = lamb
-    wandb.config.k = k
-    wandb.config.chkpt_name = chkpt_name
-    wandb.config.batch_size = batch_size
 
-    cfg = wandb.config
+    if TRAIN:
+        wandb.init(project='csc2515-proj', name=chkpt_name)
+
 
     zero_train_matrix, train_matrix, valid_data, test_data = load_data()
 
     eval_input_matrix = build_evaluation_input_matrix(valid_data, zero_train_matrix)
     train_data = build_train_data_dict(train_matrix)
 
-    model = AutoEncoder(num_question=1774, k=k)
+    if TRAIN:
+        wandb.config.num_epoch = num_epoch
+        wandb.config.lr = lr
+        wandb.config.activation = activation
+        wandb.config.lamb = lamb
+        wandb.config.n_hidden_units = n_hidden_units
+        wandb.config.chkpt_name = chkpt_name
+        wandb.config.batch_size = batch_size
+        wandb.config.optim = optim
 
+        cfg = wandb.config
+
+        model = AutoEncoder(num_question=1774, activation=activation, n_hidden_units=n_hidden_units)
+
+        model.to(DEVICE)
+        
+        train_losses, val_accs, best_val_acc = train(
+            model=model, train_data=train_matrix, zero_train_data=zero_train_matrix, 
+            valid_data=valid_data, eval_input_matrix=eval_input_matrix, cfg=cfg)
+
+
+    #model = AutoEncoder(num_question=1774, k=k)
+    model = AutoEncoder(num_question=1774, n_hidden_units=n_hidden_units)
+    checkpoint = torch.load(chkpt_name)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.to(DEVICE)
+
+    test_input_matrix = build_evaluation_input_matrix(test_data, zero_train_matrix)
     
-    train_losses, val_accs, best_val_acc = train(
-        model=model, train_data=train_matrix, zero_train_data=zero_train_matrix, 
-        valid_data=valid_data, eval_input_matrix=eval_input_matrix, cfg=cfg)
-
-
-    print('Train acc:', evaluate(
-        model,
-        build_evaluation_input_matrix(train_data, zero_train_matrix), 
-        train_data))
-    
-    # model = AutoEncoder(num_question=1774, k=k)
-    # checkpoint = torch.load(f'best_net_{chkpt_name}.pt')
-    # model.load_state_dict(checkpoint['model_state_dict'])
-    # model.to(DEVICE)
-
-    # test_input_matrix = build_evaluation_input_matrix(test_data, zero_train_matrix)
-    # print('Val acc:', evaluate(model, eval_input_matrix, valid_data))
-    # print('Test acc:', evaluate(model, test_input_matrix, test_data))
+    print('Train acc:', evaluate(model,build_evaluation_input_matrix(train_data, zero_train_matrix), train_data))
+    print('Val acc:', evaluate(model, eval_input_matrix, valid_data))
+    print('Test acc:', evaluate(model, test_input_matrix, test_data))
 
 
 if __name__ == "__main__":
+    torch.manual_seed(0)
+    np.random.seed(0)
+    random.seed(0)
+    
+    DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print('Runnnig on', DEVICE)
+    
     main()
