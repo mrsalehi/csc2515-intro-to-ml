@@ -58,36 +58,58 @@ def load_data(base_path="../data"):
     return zero_train_matrix, train_matrix, valid_data, test_data
 
 
+def data_loader(zero_train_matrix, train_matrix, batch_size, shuffle=True):
+    if shuffle:
+        idxs = np.random.permutation(len(train_matrix))
+        zero_train_matrix, train_matrix = zero_train_matrix[idxs], train_matrix[idxs]
+    
+    for i in range(0, len(zero_train_matrix) // batch_size):
+        yield zero_train_matrix[i * batch_size: (i+1)*batch_size], train_matrix[i * batch_size: (i+1)*batch_size]
+
+
 class VAE(nn.Module):
-    def __init__(self, num_question, n_hidden_units=[50, 10]):
+    def __init__(self, num_question, n_hidden_units, activation='tanh'):
+        super().__init__()
+        if activation == 'tanh':
+            self.activation = nn.Tanh()
+        elif activation == 'sigmoid':
+            self.activation = nn.Sigmoid()
+        elif activation == 'relu':
+            self.activation = nn.ReLU()
         
-        self.dim_z = n_hidden_units[:-1] / 2 
+        assert n_hidden_units[-1] % 2 == 0
+        self.dim_z = int(n_hidden_units[-1] / 2)
+
         n_units = [num_question] + n_hidden_units
 
         self.enc = []
         for i in range(len(n_units) - 1):
             self.enc.append(nn.Linear(n_units[i], n_units[i+1]))
             if i < len(n_units) - 2:
-                self.enc.append(nn.Tanh())
+                self.enc.append(self.activation)
         
         self.enc = nn.Sequential(*self.enc)
+        print(self.enc)
+
+        n_units = [self.dim_z] + list(reversed(n_hidden_units[:-1])) + [num_question]
 
         self.dec = []
-        for i in range(len(n_units) - 1, 1):
-            self.enc.append(nn.Linear(n_units[i], n_units[i-1]))
-            if i > 0:
-                self.dec.append(nn.Tanh())
+        for i in range(len(n_units) - 1):
+            self.dec.append(nn.Linear(n_units[i], n_units[i+1]))
+            if i < len(n_units) - 2:
+                self.dec.append(self.activation)
 
         self.dec = nn.Sequential(*self.dec)
+        print(self.dec)
 
     def forward(self, x):
         batch_size = x.size(0)
-        out_enc = self.encoder(x)
-        mu, log_var = out_enc[:self.dim_z], out_enc[self.dim_z:]
-        z = torch.randn_like(log_var) * torch.exp(0.5 * log_var) + mu
+        out_enc = self.enc(x)
+        mu, log_std = out_enc[:, :self.dim_z], out_enc[:, self.dim_z:]
+        z = torch.randn_like(log_std) * torch.exp(log_std) + mu
         x_recon = self.dec(z)
 
-        return mu, log_var, x_recon
+        return mu, log_std, x_recon
 
 
 def evaluate(model, val_input_matrix, valid_data):
@@ -112,20 +134,13 @@ def evaluate(model, val_input_matrix, valid_data):
         qids = question_ids[i*batch_size:(i+1)*batch_size]
         is_cor = is_correct[i*batch_size:(i+1)*batch_size]
         
-        output = model(inputs.to(DEVICE)).cpu()
-        guesses = output[list(range(batch_size)), qids] >= 0.5
+        _, _, x_recon = model(inputs.to(DEVICE))
+        x_recon = x_recon.cpu()
+        
+        guesses = x_recon[list(range(batch_size)), qids] >= 0.5
         corrects += torch.sum(guesses == is_cor).item()
 
     return corrects / len(question_ids)
-
-
-def data_loader(zero_train_matrix, train_matrix, batch_size, shuffle=True):
-    if shuffle:
-        idxs = np.random.permutation(len(train_matrix))
-        zero_train_matrix, train_matrix = zero_train_matrix[idxs], train_matrix[idxs]
-    
-    for i in range(0, len(zero_train_matrix) // batch_size):
-        yield zero_train_matrix[i * batch_size: (i+1)*batch_size], train_matrix[i * batch_size: (i+1)*batch_size]
 
 
 def train(model, train_data, zero_train_data, valid_data, eval_input_matrix, cfg):
@@ -136,6 +151,8 @@ def train(model, train_data, zero_train_data, valid_data, eval_input_matrix, cfg
         optimizer = optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.lamb)
     elif cfg.optim == 'sgd':
         optimizer = optim.SGD(model.parameters(), lr=cfg.lr, weight_decay=cfg.lamb)
+
+    criterion = torch.nn.BCEWithLogitsLoss()
 
     num_student = train_data.shape[0]
 
@@ -154,14 +171,15 @@ def train(model, train_data, zero_train_data, valid_data, eval_input_matrix, cfg
             target = X_zero.clone()
 
             optimizer.zero_grad()
-            X_recon, log_var, mu = model(X_zero)
+            mu, log_std, X_recon = model(X_zero)
 
             # Mask the target to only compute the gradient of valid entries.
             nan_mask = torch.isnan(X)
-            target[nan_mask] = X_recon[nan_mask]
+            target[nan_mask] = 1.
+            X_recon[nan_mask] = 1.
 
-            kl_loss = 0.5 * torch.sum(- 1. - log_var + mu**2 + torch.exp(log_var), axis=1)
-            recon_loss = torch.mean(nn.BCEWithLogitsLoss(X_recon, target))
+            kl_loss = torch.mean(0.5 * torch.sum(- 1. - 2*log_std + mu**2 + torch.exp(2*log_std), axis=1))
+            recon_loss = criterion(X_recon, target)
             
             loss = recon_loss + kl_loss
             loss.backward()
@@ -191,13 +209,13 @@ def train(model, train_data, zero_train_data, valid_data, eval_input_matrix, cfg
 def main():
     TRAIN = True
 
-    n_hidden_units = [50]
+    n_hidden_units = [1000, 100, 4]
     lamb = 0.
     num_epoch = 1000
-    lr = 1e-3
+    lr = 1e-4
     batch_size = 128
-    chkpt_name = "50"
-    activation = "sigmoid"
+    chkpt_name = "10-tanh-lr1e-4"
+    activation = "relu"
     optim = "adam"
 
     zero_train_matrix, train_matrix, valid_data, test_data = load_data()
@@ -205,7 +223,7 @@ def main():
     train_data = build_train_data_dict(train_matrix)
 
     if TRAIN:
-        wandb.init(project='csc2515-proj', name=chkpt_name)
+        wandb.init(project='csc2515-proj', name='vae'+chkpt_name)
         wandb.config.num_epoch = num_epoch
         wandb.config.lr = lr
         wandb.config.activation = activation
@@ -217,13 +235,13 @@ def main():
 
         cfg = wandb.config
 
-        model = VAE(num_question=1774, activation=activation, n_hidden_units=n_hidden_units)
+        model = VAE(num_question=1774, n_hidden_units=n_hidden_units, activation=cfg.activation)
 
         model.to(DEVICE)
 
-
-def main():
-    pass
+        train_losses, val_accs, best_val_acc = train(
+            model=model, train_data=train_matrix, zero_train_data=zero_train_matrix, 
+            valid_data=valid_data, eval_input_matrix=eval_input_matrix, cfg=cfg)
 
 
 if __name__ == "__main__":
