@@ -78,7 +78,6 @@ class AutoEncoder(nn.Module):
 
         for i in range(len(n_units) - 1):
             self.net.append(nn.Linear(n_units[i], n_units[i+1]))
-
             if i < len(n_units) - 2:
                 self.net.append(self.activation)
             else:
@@ -232,37 +231,35 @@ def evaluate(model, val_input_matrix, valid_data):
     batch_size = 128
     corrects = 0
 
-    for i in range(len(question_ids) // batch_size):
+    for i in range(len(question_ids) // batch_size + 1):
         inputs = val_input_matrix[i*batch_size:(i+1)*batch_size]
         qids = question_ids[i*batch_size:(i+1)*batch_size]
         is_cor = is_correct[i*batch_size:(i+1)*batch_size]
         
         output = model(inputs.to(DEVICE)).cpu()
-        guesses = output[list(range(batch_size)), qids] >= 0.5
+
+        guesses = output[list(range(len(inputs))), qids] >= 0.5
         corrects += torch.sum(guesses == is_cor).item()
 
     return corrects / len(question_ids)
-
 
 def main():
     # is_nan = torch.isnan(train_matrix)
     # print(torch.mean(torch.sum(is_nan, dim=-1).float()))  # out: 1669.4
 
-    TRAIN = True
+    TRAIN = False
 
-    n_hidden_units = [50]
+    n_hidden_units = [100, 10, 5, 10, 100]
     lamb = 0.
     num_epoch = 1000
     lr = 1e-3
-    batch_size = 128
-    chkpt_name = "50"
+    batch_size = 16
+    chkpt_name = "100-10-5-10-100"
     activation = "sigmoid"
     optim = "adam"
 
-
     if TRAIN:
         wandb.init(project='csc2515-proj', name=chkpt_name)
-
 
     zero_train_matrix, train_matrix, valid_data, test_data = load_data()
 
@@ -282,6 +279,7 @@ def main():
         cfg = wandb.config
 
         model = AutoEncoder(num_question=1774, activation=activation, n_hidden_units=n_hidden_units)
+        print(model)
 
         model.to(DEVICE)
         
@@ -308,7 +306,7 @@ if __name__ == "__main__":
     np.random.seed(0)
     random.seed(0)
     
-    DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    DEVICE = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     print('Runnnig on', DEVICE)
     
     main()

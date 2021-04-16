@@ -129,7 +129,7 @@ def evaluate(model, val_input_matrix, valid_data):
     batch_size = 128
     corrects = 0
 
-    for i in range(len(question_ids) // batch_size):
+    for i in range(len(question_ids) // batch_size + 1):
         inputs = val_input_matrix[i*batch_size:(i+1)*batch_size]
         qids = question_ids[i*batch_size:(i+1)*batch_size]
         is_cor = is_correct[i*batch_size:(i+1)*batch_size]
@@ -137,7 +137,7 @@ def evaluate(model, val_input_matrix, valid_data):
         _, _, x_recon = model(inputs.to(DEVICE))
         x_recon = x_recon.cpu()
         
-        guesses = x_recon[list(range(batch_size)), qids] >= 0.5
+        guesses = x_recon[list(range(len(inputs))), qids] >= 0.5
         corrects += torch.sum(guesses == is_cor).item()
 
     return corrects / len(question_ids)
@@ -209,13 +209,13 @@ def train(model, train_data, zero_train_data, valid_data, eval_input_matrix, cfg
 def main():
     TRAIN = True
 
-    n_hidden_units = [1000, 100, 4]
+    n_hidden_units = [1000, 10]
     lamb = 0.
     num_epoch = 1000
-    lr = 1e-4
-    batch_size = 128
-    chkpt_name = "10-tanh-lr1e-4"
-    activation = "relu"
+    lr = 1e-3
+    batch_size = 16
+    chkpt_name = "1000-10-adam-sigmoid-lr1e-3"
+    activation = "sigmoid"
     optim = "adam"
 
     zero_train_matrix, train_matrix, valid_data, test_data = load_data()
